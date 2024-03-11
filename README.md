@@ -1,7 +1,7 @@
 Implementation of NanoGPT to experiment with Transformers and Attention (from Karpahty's NanoGPT implementation).
 
-\begin{itemize}
-\item model.py: GPT definition.
+
+model.py: GPT definition.
 
 train.py: Training functions.
 
@@ -11,4 +11,3 @@ configurator.py: set up for config for training.
 
 In the data/shakespeare_char directory the file prepare.py loads the raw text data and prepares the training and validation set.
 
-\end{itemize}
