@@ -12,7 +12,7 @@ class LayerNorm(nn.Module):
     """ Layer normalization with optional bias. """
 
     def __init__(self, ndim, bias):
-        super().init()
+        super().__init__()
         self.weight = nn.Parameter(torch.ones(ndim))
         self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
 
@@ -22,6 +22,7 @@ class LayerNorm(nn.Module):
 class CausalSelfAttention(nn.Module):
 
     def __init__(self, config): # config is a dict
+        super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value for all heads, but in a batch
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias = config.bias)
@@ -34,43 +35,40 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
         # flash attention
-        self.flash = hasattr(torch.nn.function, "scaled_dot_product_attention") # hasattr checks wheter the object has an attribute of the provided name
+        self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention") # hasattr checks wheter the object has an attribute of the provided name
         if not self.flash:
             print("Warning: slow attention.")
             # causal attention (save them in buffer so to have the param in state_dict but not update by optim)
-            self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                                 .view(1,1, config.block_size, config.block_size)) # view -->to reshape
+            self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size)).view(1,1, config.block_size, config.block_size)) # view -->to reshape
 
 
-        def forward(self, x):
-            B, T, C = x.size() # batch size, sequence length, embedding dim (n_embd)
+    def forward(self, x):
+        B, T, C = x.size() # batch size, sequence length, embedding dim (n_embd)
 
-            # calculate query, key and value vectors for all heads in batch and move head forward to the batch dim (?)
-            # output of c_attn(x) is n_embd * 3 !
-            q, k, v = self.c_attn(x).split(self.n_embd, dim = 2)
-            # // floor division (why n_head dim?)
-            k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) #(B, nh, T, hs) # hs is --> emdedding dim/num of heads
-            q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) #(B, nh, T, hs)
-            v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) #(B, nh, T, hs)
+        # calculate query, key and value vectors for all heads in batch and move head forward to the batch dim (?)
+        # output of c_attn(x) is n_embd * 3 !
+        q, k, v = self.c_attn(x).split(self.n_embd, dim = 2) # // floor division (why n_head dim?)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) #(B, nh, T, hs) # hs is --> emdedding dim/num of heads
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) #(B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) #(B, nh, T, hs)
 
-            # casual self-attention (B, nh, T, hs) x (B, nh, hs, T) --> (B, nh, T, T)
-            #                           Query X Key --> Attention Scores/Weights
-
-            if self.flash:
-                # efficient attention
-                y = torch.nn.function.scaled_dot_product_attention(q, k, v, attn_mask = None, dropout_p = self.dropout if self.training else 0, is_causal = True)
-
-            else:
-                # manual implementation of self-attention
-                att = (q @ k.transpose(-2,-1)) * (1.0/math.sqrt(k.size(-1))) #scaled self-attention
-                att = att.mask_fill(self.bias[:, :, :T, :T] == 0, float("-inf")) # mask
-                att = F.softmax(att, dim = -1) #over token
-                att = self.attn_dropout(att) # randomly ignore some tokens ?
-                y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        # casual self-attention (B, nh, T, hs) x (B, nh, hs, T) --> (B, nh, T, T)
+        #                           Query X Key --> Attention Scores/Weights
+        if self.flash:
+            # efficient attention
+            y = torch.nn.function.scaled_dot_product_attention(q, k, v, attn_mask = None, dropout_p = self.dropout if self.training else 0, is_causal = True)
+        else:
+            # manual implementation of self-attention
+            att = (q @ k.transpose(-2,-1)) * (1.0/math.sqrt(k.size(-1))) #scaled self-attention
+            att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf")) # mask
+            att = F.softmax(att, dim = -1) #over token
+            att = self.attn_dropout(att) # randomly ignore some tokens ?
+            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
             y = y.transpose(1,2).contiguous().view(B, T, C) # reassemble heads side-by-side ; contiguous is for memory format
-
             # output projection (to combine the heads into a single representation) + dropout
             y = self.resid_dropout(self.c_proj(y))
+        
+        return y
 
 class MLP(nn.Module):
 
@@ -124,14 +122,14 @@ class GPT(nn.Module):
 
         # ModuleDict is an ordered dict that works like a python dict
         self.transformer = nn.ModuleDict( dict( 
-            wte = nn.Embedding(config.vocab_size, config.n_embd)
-            wpe  = nn.Embedding(config.block_size, config.n_embd) # positional is learned
-            drop = nn.Dropout(config.dropout)
+            wte = nn.Embedding(config.vocab_size, config.n_embd),
+            wpe  = nn.Embedding(config.block_size, config.n_embd), # positional is learned
+            drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            ln_f = LayerNorm(config.n_embd, bias = config.biasp)
+            ln_f = LayerNorm(config.n_embd, bias = config.bias)
         ))
 
-        self.lm_head = nn.Linear(config.n_emdn, config.vocab_size, bias = False) # read out layer
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias = False) # read out layer
         # some comments
 
         self.transformer.wte.weight = self.lm_head.weight # weight-tying, same weight for mapping from vocab to vector and viceverse
@@ -171,7 +169,7 @@ class GPT(nn.Module):
     def forward(self, idx, targets = None):
         device = idx.device # GPU or CPU
         b, t = idx.size() # the input sequence (in batch)
-        assert t <= self.config_block_size, f"Cannot forward sequence length {t}, block size is only {self.config.block_size}"
+        assert t <= self.config.block_size, f"Cannot forward sequence length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype = torch.long, device = device)
 
         # forward the GPT model

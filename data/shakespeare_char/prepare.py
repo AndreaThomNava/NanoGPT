@@ -1,4 +1,6 @@
 """
+Stores in .bin --> binary
+
 Prepare the Shakespeare dataset for character-level language modeling.
 So instead of encoding with GPT-2 BPE tokens, we just map characters to ints.
 Will save train.bin, val.bin containing the ids, and meta.pkl containing the
@@ -18,7 +20,9 @@ if not os.path.exists(input_file_path):
 
 with open(input_file_path, 'r') as f:
     data = f.read()
-print(f"length of dataset in characters: {len(data):,}")
+    print(len(data))
+
+#print(f"length of dataset in characters: {len(data):,}")
 
 # get all the unique characters that occur in this text
 chars = sorted(list(set(data)))
